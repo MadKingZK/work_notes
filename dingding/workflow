@@ -1,0 +1,178 @@
+from alibabacloud_dingtalk.oauth2_1_0.client import Client as dingtalkoauth2_1_0Client
+from alibabacloud_dingtalk.oauth2_1_0 import models as dingtalkoauth_2__1__0_models
+from alibabacloud_dingtalk.workflow_1_0.client import Client as dingtalkworkflow_1_0Client
+from alibabacloud_dingtalk.workflow_1_0.models import (
+    StartProcessInstanceRequestFormComponentValues,
+    StartProcessInstanceHeaders,
+)
+from alibabacloud_tea_openapi import models as open_api_models
+from alibabacloud_dingtalk.workflow_1_0 import models as dingtalkworkflow__1__0_models
+from alibabacloud_tea_util import models as util_models
+
+from utils.dingtalk import api as ding_api
+
+from ldconfig import configuration
+from logman import logger
+
+
+class DingWorkFlow:
+    def __init__(self):
+        self.config = configuration.get("ding_workflow")
+        self.protocol = "https"
+        self.region_id = "central"
+        self.app_key = self.config.get("app_key")
+        self.app_secret = self.config.get("app_secret")
+        self.agent_id = self.config.get("agent_id")
+        self.process_code = self.config.get("process_code")
+        self.oauth_client = self._create_oauth_client()
+        self.work_flow_client = self._create_work_flow_client()
+        self.token = self._get_access_token()
+
+    def _create_oauth_client(self) -> dingtalkoauth2_1_0Client:
+        """
+        使用 Token 初始化oauth使用的账号Client
+        @return: Client
+        @throws Exception
+        """
+        try:
+            config = open_api_models.Config()
+            config.protocol = self.protocol
+            config.region_id = self.region_id
+            return dingtalkoauth2_1_0Client(config)
+        except Exception as err:
+            logger.error(f"""调用钉钉workflow失败, 创建oauth client失败, error_code: {getattr(err, "code", "")}, \
+                            error_message: {getattr(err, "message", "")}, error: {err}""")
+            raise err
+
+    def _create_work_flow_client(self) -> dingtalkworkflow_1_0Client:
+        """
+        使用 Token 初始化workflow使用的账号Client
+        @return: Client
+        @throws Exception
+        """
+        try:
+            config = open_api_models.Config()
+            config.protocol = self.protocol
+            config.region_id = self.region_id
+            return dingtalkworkflow_1_0Client(config)
+        except Exception as err:
+            logger.error(f"""调用钉钉workflow失败, 创建workflow client失败, error: {err}""")
+            raise err
+
+    def _get_access_token(self):
+        request = dingtalkoauth_2__1__0_models.GetAccessTokenRequest(
+            app_key=self.app_key,
+            app_secret=self.app_secret
+        )
+        try:
+            response = self._create_oauth_client().get_access_token(request)
+            if not response.body.access_token:
+                error_msg = f"""获取access_token失败, access_token返回空, body: {response.body}"""
+                logger.error(error_msg)
+                raise error_msg
+
+            return response.body.access_token
+        except Exception as err:
+            logger.error(f"""调用钉钉workflow失败, 获取access token失败, error_code: {getattr(err, "code", "")}, \
+                            error_message: {getattr(err, "message", "")}, error: {err}""")
+            raise err
+
+    def start_process_instance(self, originator_uid, approver_uid, business_code, dept_code, app_code, other_col):
+        """
+        发起预案审批流程
+        @param originator_uid: 发起人ding user id
+        @param approver_uid: 审批人ding user id
+        @param business_code: 业务code
+        @param dept_code: 部门code
+        @param app_code: 应用code
+        @param other_col: 其他字段
+        @return:
+        """
+        try:
+            cloud_config_schema = {
+                "业务线": business_line,
+                "部门": dept_code,
+                "应用": app_code,
+                "其他字段": other_col
+            }
+            headers = StartProcessInstanceHeaders()
+            headers.x_acs_dingtalk_access_token = self.token
+            form_component_values = [StartProcessInstanceRequestFormComponentValues(name=k, value=v)
+                                     for k, v in cloud_config_schema.items()]
+            approvers_0 = dingtalkworkflow__1__0_models.StartProcessInstanceRequestApprovers(
+                action_type='NONE',
+                user_ids=[approver_uid]
+            )
+            request = dingtalkworkflow__1__0_models.StartProcessInstanceRequest()
+            request.originator_user_id = originator_uid
+            request.process_code = self.process_code
+            request.microapp_agent_id = self.agent_id
+            request.approvers = approvers_0,
+            request.form_component_values = form_component_values
+            print(form_component_values)
+            response = self.work_flow_client.start_process_instance_with_options(request, headers,
+                                                                                 util_models.RuntimeOptions())
+            return response.body.instance_id
+        except Exception as err:
+            logger.error(f"""调用钉钉workflow发起审批失败, scene_id: {scene_id}, scene_description: {scene_description}, \
+                            error_code: {getattr(err, "code", "")}, error_message: {getattr(err, "message", "")}, \
+                            error: {err}""")
+            return None
+
+    def terminate_process_instance(self, process_instance_id, operating_userid, remark):
+        """
+        撤销工单审批
+        @param process_instance_id: 审批工单实例id
+        @param operating_userid: 操作用户id
+        @param remark: 备注
+        @return:
+        """
+        try:
+            req = ding_api.OapiProcessInstanceTerminateRequest(
+                "https://oapi.dingtalk.com/topapi/process/instance/terminate")
+
+            req.request = {
+                "is_system": True,
+                "process_instance_id": process_instance_id,
+                "operating_userid": operating_userid,
+                "remark": remark,
+            }
+            resp = req.getResponse(self.token)
+            if resp.get("errcode", -1) == 0:
+                logger.info(f"""获取钉钉撤销工单详情成功, process_instance_id: {process_instance_id}, remark: {remark}, \
+                                operator: {operating_userid}, request_id: {resp.get("request_id")}""")
+                return resp.get("process_instance")
+            logger.error(f"""获取钉钉撤销工单详情失败, process_instance_id: {process_instance_id}, operator: \
+                            {operating_userid}, error_code: {resp.get("errcode")}, error_msg: {resp.get("errmsg")}, \
+                            request_id: {resp.get("request_id")}""")
+            return None
+        except Exception as err:
+            logger.error(f"""调用钉钉workflow撤销审批失败, process_instance_id: {process_instance_id}, \
+                            operator: {operating_userid}, operating_userid: {operating_userid}, \
+                            error_code: {getattr(err, "code", "")}, error_message: {getattr(err, "message", "")}, \
+                            error: {err}""")
+            return None
+
+    def get_process_instance(self, process_instance_id):
+        """
+        获取工单详情
+        @param process_instance_id:
+        @return:
+        """
+        try:
+            req = ding_api.OapiProcessinstanceGetRequest("https://oapi.dingtalk.com/topapi/processinstance/get")
+            req.process_instance_id = process_instance_id
+            resp = req.getResponse(self.token)
+            if resp.get("errcode", -1) == 0:
+                logger.info(f"""获取钉钉审批工单详情成功, process_instance_id: {process_instance_id}, \
+                                request_id: {resp.get("request_id")}""")
+                return resp.get("process_instance")
+            logger.error(f"""获取钉钉审批工单详情失败, process_instance_id: {process_instance_id}, error_code: \
+                            {resp.get("errcode")}, error_msg: {resp.get("errmsg")}, \
+                            request_id: {resp.get("request_id")}""")
+            return None
+        except Exception as err:
+            logger.error(f"""调用钉钉workflow撤销审批失败, process_instance_id: {process_instance_id}, \
+                            error_code: {getattr(err, "code", "")}, error_message: {getattr(err, "message", "")}, \
+                            error: {err}""")
+            return None
