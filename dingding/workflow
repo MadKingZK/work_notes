@@ -79,7 +79,7 @@ class DingWorkFlow:
 
     def start_process_instance(self, originator_uid, approver_uid, business_code, dept_code, app_code, other_col):
         """
-        发起预案审批流程
+        发起审批流程
         @param originator_uid: 发起人ding user id
         @param approver_uid: 审批人ding user id
         @param business_code: 业务code
